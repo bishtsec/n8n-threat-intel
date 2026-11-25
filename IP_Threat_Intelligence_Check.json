@@ -1,0 +1,142 @@
+{
+  "name": "IP Threat Intelligence Check",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "IP Threat Intelligence Check",
+        "formDescription": "Enter an IP address to check it against VirusTotal and AbuseIPDB. A summary is emailed to you.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "IP Address",
+              "fieldType": "text",
+              "requiredField": true,
+              "placeholder": "e.g. 8.8.8.8",
+              "fieldName": "ip"
+            }
+          ]
+        },
+        "responseMode": "lastNode"
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [220, 300],
+      "id": "node-form-trigger",
+      "name": "Enter IP Address",
+      "webhookId": "ip-threat-intel-check"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.virustotal.com/api/v3/ip_addresses/{{ $json.ip.trim() }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "virusTotalApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "id": "node-virustotal",
+      "name": "Check VirusTotal"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.abuseipdb.com/api/v2/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ipAddress",
+              "value": "={{ $('Enter IP Address').item.json.ip.trim() }}"
+            },
+            {
+              "name": "maxAgeInDays",
+              "value": "90"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Key",
+              "value": "={{ $credentials.httpCustomAuth?.headers?.Key || '' }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 300],
+      "id": "node-abuseipdb",
+      "name": "Check AbuseIPDB"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Gather VirusTotal stats\nconst vt = $('Check VirusTotal').item.json.data?.attributes || {};\nconst vtStats = vt.last_analysis_stats || {};\nconst vtMalicious = vtStats.malicious || 0;\nconst vtSuspicious = vtStats.suspicious || 0;\nconst vtHarmless = vtStats.harmless || 0;\nconst vtUndetected = vtStats.undetected || 0;\nconst vtReputation = vt.reputation || 0;\nconst vtOwner = vt.as_owner || 'Unknown';\nconst vtCountry = vt.country || 'Unknown';\n\n// Gather AbuseIPDB stats\nconst abuse = $('Check AbuseIPDB').item.json.data || {};\nconst abuseScore = abuse.abuseConfidenceScore || 0;\nconst abuseTotalReports = abuse.totalReports || 0;\nconst abuseIsp = abuse.isp || 'Unknown';\nconst abuseDomain = abuse.domain || 'Unknown';\nconst abuseUsageType = abuse.usageType || 'Unknown';\nconst abuseIsWhitelisted = abuse.isWhitelisted || false;\nconst abuseLastReported = abuse.lastReportedAt || 'Never';\nconst abuseDistinctUsers = abuse.numDistinctUsers || 0;\n\nconst ip = $('Enter IP Address').item.json.ip.trim();\n\n// Build verdict\nlet verdict = 'CLEAN';\nif (vtMalicious > 0 || abuseScore >= 50) {\n  verdict = 'MALICIOUS';\n} else if (vtSuspicious > 0 || abuseScore >= 25) {\n  verdict = 'SUSPICIOUS';\n}\n\nreturn {\n  ip,\n  verdict,\n  vtMalicious,\n  vtSuspicious,\n  vtHarmless,\n  vtUndetected,\n  vtReputation,\n  vtOwner,\n  vtCountry,\n  abuseScore,\n  abuseTotalReports,\n  abuseDistinctUsers,\n  abuseIsp,\n  abuseDomain,\n  abuseUsageType,\n  abuseIsWhitelisted,\n  abuseLastReported\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 300],
+      "id": "node-verdict",
+      "name": "Build Verdict"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ /* Replace with your email */ 'your-email@example.com' }}",
+        "subject": "=IP Threat Check: {{ $json.ip }} — {{ $json.verdict }}",
+        "emailType": "html",
+        "message": "=<h2 style=\"color: {{ $json.verdict === 'MALICIOUS' ? '#d32f2f' : $json.verdict === 'SUSPICIOUS' ? '#f57c00' : '#388e3c' }}\">Verdict: {{ $json.verdict }}</h2>\n<p><strong>IP Address:</strong> {{ $json.ip }}</p>\n<hr>\n<h3>VirusTotal Results</h3>\n<ul>\n<li><strong>Malicious:</strong> {{ $json.vtMalicious }} engines</li>\n<li><strong>Suspicious:</strong> {{ $json.vtSuspicious }} engines</li>\n<li><strong>Harmless:</strong> {{ $json.vtHarmless }} engines</li>\n<li><strong>Undetected:</strong> {{ $json.vtUndetected }} engines</li>\n<li><strong>Reputation Score:</strong> {{ $json.vtReputation }}</li>\n<li><strong>Network Owner:</strong> {{ $json.vtOwner }}</li>\n<li><strong>Country:</strong> {{ $json.vtCountry }}</li>\n</ul>\n<hr>\n<h3>AbuseIPDB Results</h3>\n<ul>\n<li><strong>Abuse Confidence Score:</strong> {{ $json.abuseScore }}%</li>\n<li><strong>Total Reports:</strong> {{ $json.abuseTotalReports }} (from {{ $json.abuseDistinctUsers }} users)</li>\n<li><strong>ISP:</strong> {{ $json.abuseIsp }}</li>\n<li><strong>Domain:</strong> {{ $json.abuseDomain }}</li>\n<li><strong>Usage Type:</strong> {{ $json.abuseUsageType }}</li>\n<li><strong>Whitelisted:</strong> {{ $json.abuseIsWhitelisted }}</li>\n<li><strong>Last Reported:</strong> {{ $json.abuseLastReported }}</li>\n</ul>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1180, 300],
+      "id": "node-email",
+      "name": "Email Summary",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Enter IP Address": {
+      "main": [
+        [{ "node": "Check VirusTotal", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check VirusTotal": {
+      "main": [
+        [{ "node": "Check AbuseIPDB", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check AbuseIPDB": {
+      "main": [
+        [{ "node": "Build Verdict", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Verdict": {
+      "main": [
+        [{ "node": "Email Summary", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
